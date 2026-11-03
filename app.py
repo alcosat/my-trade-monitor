@@ -102,19 +102,23 @@ with col2:
         st.sidebar.warning("Възстановени фабрични настройки!")
         st.rerun()
 
-# --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА ---
+# --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА (ОПТИМИЗИРАНА ЗА BINANCE) ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
-    tf_mapping = {'15m': '15min', '1h': '60min', '4h': '4hour', '1d': '1day'}
+    # Binance използва същите кратки имена за времеви рамки ('15m', '1h', '4h', '1d')
     try:
-        # ПОПРАВКА: Използване на правилния API адрес за пазарни данни
-        url = "https://huobi.pro"
-        params = {'symbol': symbol.lower(), 'period': tf_mapping.get(timeframe, '60min'), 'size': 150}
+        url = "https://binance.com"
+        params = {'symbol': symbol.upper(), 'interval': timeframe, 'limit': 150}
         res = requests.get(url, params=params, timeout=10).json()
-        if res.get('status') == 'ok':
+        
+        if isinstance(res, list):
             df = pd.DataFrame([{
-                'timestamp': pd.to_datetime(k['id'], unit='s'), 'open': float(k['open']),
-                'high': float(k['high']), 'low': float(k['low']), 'close': float(k['close']), 'volume': float(k['vol'])
-            } for k in res['data']])
+                'timestamp': pd.to_datetime(k[0], unit='ms'), 
+                'open': float(k[1]),
+                'high': float(k[2]), 
+                'low': float(k[3]), 
+                'close': float(k[4]), 
+                'volume': float(k[5])
+            } for k in res])
             return df.sort_values('timestamp').reset_index(drop=True)
     except:
         pass
@@ -155,7 +159,6 @@ def calculate_amfc(df: pd.DataFrame) -> Tuple[float, float, float]:
 def send_telegram_message(msg: str):
     if cfg['bot_token'] and cfg['chat_id']:
         try:
-            # ПОПРАВКА: Използване на правилния API адрес за ботове в Telegram
             url = f"https://telegram.org{cfg['bot_token']}/sendMessage"
             requests.get(url, params={'chat_id': cfg['chat_id'], 'text': msg, 'parse_mode': 'HTML'}, timeout=10)
         except:
@@ -202,7 +205,6 @@ for symbol in cfg['symbols']:
             prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
             current_bias_type = 'LONG' if '🟢' in bias else 'SHORT' if '🔴' in bias else 'NEUTRAL'
             
-            # ДОПЪЛНЕНИЕ: Завършване на логиката за пресмятане на риск и изпращане на съобщение
             if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
                 risk = atr * cfg['sl_atr_mult']
                 
@@ -217,10 +219,8 @@ for symbol in cfg['symbols']:
                     tp2 = price - (risk * cfg['tp2_r'])
                     tp3 = price - (risk * cfg['tp3_r'])
                 
-                # Записване на новото състояние в сесията
                 st.session_state.previous_states[state_key] = current_bias_type
                 
-                # Текстов шаблон за известието в Telegram
                 msg_text = (
                     f"🔔 <b>НОВ СИГНАЛ: {symbol} ({tf})</b>\n"
                     f"Посока: {bias}\n"

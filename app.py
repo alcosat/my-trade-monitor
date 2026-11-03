@@ -14,28 +14,21 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SMART AMFC Monitor", page_icon="🎯", layout="wide")
 
 # --- ИНТЕЛЕГЕНТЕН ТАЙМЕР ЗА КРЪГЪЛ ЧАС (БЪЛГАРСКО ВРЕМЕ) ---
-# Намираме текущото време в София
 now = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia"))
 current_minute = now.minute
 current_second = now.second
 
-# Пресмятаме колко минути остават до следващия кръгъл 15-минутен интервал (:00, :15, :30, :45)
 minutes_to_next = 15 - (current_minute % 15)
-
-# Превръщаме оставащото време в милисекунди
 total_seconds_to_wait = (minutes_to_next * 60) - current_second
 
-# Ако сме точно в секундата на интервала, изчакваме пълни 15 минути
 if total_seconds_to_wait <= 0:
     total_seconds_to_wait = 900
 
-# Подаваме динамичното време в милисекунди на уеб опреснителното устройство
 st_autorefresh(interval=total_seconds_to_wait * 1000, key="amfcrefresh")
 # ──────────────────────────────────────────────────────────
 
 CONFIG_FILE = "smart_amfc_monitor_config.json"
 
-# Задаваме твърди фабрични настройки по подразбиране
 DEFAULT_INDICATORS = {
     'aroon_period': 14,
     'cmf_period': 20,
@@ -73,21 +66,18 @@ cfg = st.session_state.config
 # --- СТРАНИЧЕН ПАНЕЛ ---
 st.sidebar.title("⚙️ Настройки на Системата")
 
-# 📊 Параметри Индикатори
 st.sidebar.subheader("📊 Параметри Индикатори")
 cfg['aroon_period'] = st.sidebar.number_input("Aroon период", min_value=2, max_value=200, value=int(cfg['aroon_period']))
 cfg['cmf_period'] = st.sidebar.number_input("CMF период", min_value=2, max_value=200, value=int(cfg['cmf_period']))
 cfg['flow_buffer'] = st.sidebar.number_input("Flow Buffer", min_value=0.0, max_value=0.5, value=float(cfg['flow_buffer']), step=0.01)
 cfg['confirm_bars'] = st.sidebar.number_input("Прозорец потвърждение (барове)", min_value=1, max_value=20, value=int(cfg['confirm_bars']))
 
-# 📐 Риск Мениджмънт
 st.sidebar.subheader("📐 Риск Мениджмънт (ATR)")
 cfg['sl_atr_mult'] = st.sidebar.number_input("Stop Loss ATR множител", min_value=0.1, value=float(cfg['sl_atr_mult']), step=0.1)
 cfg['tp1_r'] = st.sidebar.number_input("TP1 (R множител)", min_value=0.1, value=float(cfg['tp1_r']), step=0.1)
 cfg['tp2_r'] = st.sidebar.number_input("TP2 (R множител)", min_value=0.1, value=float(cfg['tp2_r']), step=0.1)
 cfg['tp3_r'] = st.sidebar.number_input("TP3 (R множител)", min_value=0.1, value=float(cfg['tp3_r']), step=0.1)
 
-# Бутони за управление на конфигурацията
 col1, col2 = st.sidebar.columns(2)
 with col1:
     if st.button("💾 Запази"):
@@ -102,26 +92,23 @@ with col2:
         st.sidebar.warning("Възстановени фабрични настройки!")
         st.rerun()
 
-# --- КЛИЕНТ ЗА ДАННИ С ПРАВИЛНО КОНВЕРТИРАНЕ НА ТИПОВЕТЕ ДАННИ ---
+# --- КЛИЕНТ ЗА ДАННИ (БЕЗ СКРИВАНЕ НА ГРЕШКИ) ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
-    try:
-        url = "https://api.binance.com/api/v3/klines"
-        params = {'symbol': symbol.upper(), 'interval': timeframe, 'limit': 150}
-        res = requests.get(url, params=params, timeout=10).json()
-        
-        if isinstance(res, list) and len(res) > 0:
-            # КРИТИЧНА ПОПРАВКА: Задължително конвертираме стойностите към float, тъй като Binance ги връща като стрингове
-            df = pd.DataFrame([{
-                'timestamp': pd.to_datetime(k[0], unit='ms'), 
-                'open': float(k[1]),
-                'high': float(k[2]), 
-                'low': float(k[3]), 
-                'close': float(k[4]), 
-                'volume': float(k[5])
-            } for k in res])
-            return df.sort_values('timestamp').reset_index(drop=True)
-    except Exception as e:
-        pass
+    url = "https://binance.com"
+    params = {'symbol': symbol.upper(), 'interval': timeframe, 'limit': 150}
+    res = requests.get(url, params=params, timeout=10).json()
+    
+    if isinstance(res, list) and len(res) > 0:
+        # ПОПРАВКА 1: Подреждаме баровете в реверсивен ред [::-1], за да съвпаднат с логиката на Huobi
+        df = pd.DataFrame([{
+            'timestamp': pd.to_datetime(k[0], unit='ms'), 
+            'open': float(k[1]),
+            'high': float(k[2]), 
+            'low': float(k[3]), 
+            'close': float(k[4]), 
+            'volume': float(k[5])
+        } for k in res[::-1]])
+        return df
     return pd.DataFrame()
 
 def calculate_amfc(df: pd.DataFrame) -> Tuple[float, float, float]:
@@ -185,7 +172,7 @@ for symbol in cfg['symbols']:
     for idx, tf in enumerate(['15m', '1h', '4h', '1d']):
         df = get_klines(symbol, tf)
         if df.empty:
-            cols[idx].error(f"{tf}: Липса на данни")
+            cols[idx].error(f"{tf}: Празен отговор от API")
             continue
             
         aroon, cmf, atr = calculate_amfc(df)

@@ -1,0 +1,13 @@
+{
+    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"],
+    "aroon_period": 14,
+    "cmf_period": 20,
+    "flow_buffer": 0.05,
+    "confirm_bars": 5,
+    "sl_atr_mult": 1.5,
+    "tp1_r": 1.0,
+    "tp2_r": 2.0,
+    "tp3_r": 3.0,
+    "bot_token": "8360528609:AAEaLL7Fp_IfcP4_cME3Jug7Jw7ZlFhxZDQ",
+    "chat_id": "5847718406"
+}

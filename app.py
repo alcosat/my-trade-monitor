@@ -102,15 +102,15 @@ with col2:
         st.sidebar.warning("Възстановени фабрични настройки!")
         st.rerun()
 
-# --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА (ОПТИМИЗИРАНА ЗА BINANCE) ---
+# --- КЛИЕНТ ЗА ДАННИ (КОРИГИРАН ЗА КОРЕКТНО ПОДРЕЖДАНЕ НА BINANCE СТРУКТУРАТА) ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
-    # Binance използва същите кратки имена за времеви рамки ('15m', '1h', '4h', '1d')
     try:
         url = "https://binance.com"
         params = {'symbol': symbol.upper(), 'interval': timeframe, 'limit': 150}
         res = requests.get(url, params=params, timeout=10).json()
         
-        if isinstance(res, list):
+        if isinstance(res, list) and len(res) > 0:
+            # ПОПРАВКА: Данните от Binance пристигат като индексиран списък от масиви, а не като речник
             df = pd.DataFrame([{
                 'timestamp': pd.to_datetime(k[0], unit='ms'), 
                 'open': float(k[1]),

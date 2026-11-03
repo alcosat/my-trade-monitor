@@ -1,5 +1,5 @@
 {
-    "symbols": ["BTCUSDT", "TRXUSDT"],
+    "symbols": ["BTCUSDT", "ETHUSDT", "TRXUSDT"],
     "aroon_period": 14,
     "cmf_period": 20,
     "flow_buffer": 0.05,

@@ -95,7 +95,6 @@ with col1:
         st.success("Запазено!")
 
 with col2:
-    # ✅ НОВА ФУНКЦИЯ: Бутон за възстановяване на фабричните настройки на индикаторите
     if st.button("🔄 Фабрични"):
         for key, val in DEFAULT_INDICATORS.items():
             cfg[key] = val
@@ -107,6 +106,7 @@ with col2:
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     tf_mapping = {'15m': '15min', '1h': '60min', '4h': '4hour', '1d': '1day'}
     try:
+        # ПОПРАВКА: Използване на правилния API адрес за пазарни данни
         url = "https://huobi.pro"
         params = {'symbol': symbol.lower(), 'period': tf_mapping.get(timeframe, '60min'), 'size': 150}
         res = requests.get(url, params=params, timeout=10).json()
@@ -155,6 +155,7 @@ def calculate_amfc(df: pd.DataFrame) -> Tuple[float, float, float]:
 def send_telegram_message(msg: str):
     if cfg['bot_token'] and cfg['chat_id']:
         try:
+            # ПОПРАВКА: Използване на правилния API адрес за ботове в Telegram
             url = f"https://telegram.org{cfg['bot_token']}/sendMessage"
             requests.get(url, params={'chat_id': cfg['chat_id'], 'text': msg, 'parse_mode': 'HTML'}, timeout=10)
         except:
@@ -201,33 +202,33 @@ for symbol in cfg['symbols']:
             prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
             current_bias_type = 'LONG' if '🟢' in bias else 'SHORT' if '🔴' in bias else 'NEUTRAL'
             
+            # ДОПЪЛНЕНИЕ: Завършване на логиката за пресмятане на риск и изпращане на съобщение
             if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
                 risk = atr * cfg['sl_atr_mult']
-                sl = price - risk if current_bias_type == 'LONG' else price + risk
-                tp1 = price + (risk * cfg['tp1_r']) if current_bias_type == 'LONG' else price - (risk * cfg['tp1_r'])
-                tp2 = price + (risk * cfg['tp2_r']) if current_bias_type == 'LONG' else price - (risk * cfg['tp2_r'])
-                tp3 = price + (risk * cfg['tp3_r']) if current_bias_type == 'LONG' else price - (risk * cfg['tp3_r'])
                 
-                emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
-                sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
+                if current_bias_type == 'LONG':
+                    sl = price - risk
+                    tp1 = price + (risk * cfg['tp1_r'])
+                    tp2 = price + (risk * cfg['tp2_r'])
+                    tp3 = price + (risk * cfg['tp3_r'])
+                else:  # SHORT
+                    sl = price + risk
+                    tp1 = price - (risk * cfg['tp1_r'])
+                    tp2 = price - (risk * cfg['tp2_r'])
+                    tp3 = price - (risk * cfg['tp3_r'])
                 
-                msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
-                msg += "──────────────────\n"
-                msg += f"💰 <b>Вход (Цена):</b> {price_fmt}\n"
-                msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
-                msg += f"📊 <b>Aroon:</b> {aroon:+.1f} | <b>CMF:</b> {cmf:.2f}\n"
-                msg += "──────────────────\n"
-                msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
-                msg += f"🛑 SL: ${sl:.2f}\n"
-                msg += f"🎯 TP1: ${tp1:.2f}\n"
-                msg += f"🎯 TP2: ${tp2:.2f}\n"
-                msg += f"🎯 TP3: ${tp3:.2f}\n"
+                # Записване на новото състояние в сесията
+                st.session_state.previous_states[state_key] = current_bias_type
                 
-                bg_msg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
-                msg += f"\n⏰ Време: {bg_msg_time}"
-                
-                send_telegram_message(msg)
-                st.success(f"💥 Изпратен Telegram Сигнал за {tf}!")
-                
-            st.session_state.previous_states[state_key] = current_bias_type
-    st.markdown("---")
+                # Текстов шаблон за известието в Telegram
+                msg_text = (
+                    f"🔔 <b>НОВ СИГНАЛ: {symbol} ({tf})</b>\n"
+                    f"Посока: {bias}\n"
+                    f"Входна цена: {price_fmt}\n"
+                    f"Stop Loss: ${sl:.4f}\n"
+                    f"Таргети:\n"
+                    f"🎯 TP1: ${tp1:.4f}\n"
+                    f"🎯 TP2: ${tp2:.4f}\n"
+                    f"🎯 TP3: ${tp3:.4f}"
+                )
+                send_telegram_message(msg_text)

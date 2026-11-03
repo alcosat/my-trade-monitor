@@ -68,8 +68,10 @@ cfg = st.session_state.config
 # --- СТРАНИЧЕН ПАНЕЛ ---
 st.sidebar.title("⚙️ Настройки на Системата")
 st.sidebar.subheader("🤖 Telegram Бот")
+
+# ✅ ПРОМЯНА: Скриваме Bot Token и Chat ID, като ги правим от тип "password"
 cfg['bot_token'] = st.sidebar.text_input("Бот Токен", value=cfg['bot_token'], type="password")
-cfg['chat_id'] = st.sidebar.text_input("Chat ID", value=cfg['chat_id'])
+cfg['chat_id'] = st.sidebar.text_input("Chat ID", value=cfg['chat_id'], type="password")
 
 st.sidebar.subheader("📊 Параметри Индикатори")
 cfg['aroon_period'] = st.sidebar.number_input("Aroon период", min_value=2, max_value=200, value=cfg['aroon_period'])
@@ -173,8 +175,8 @@ for symbol in cfg['symbols']:
         price_fmt = f"${price:.2f}" if price >= 1 else f"${price:.4f}"
         
         bias = '⚪ Неутрален'
-        if aroon > 0 and cmf > cfg['flow_buffer']: bias = '🟢 Бичи тренд'
-        elif aroon < 0 and cmf < -cfg['flow_buffer']: bias = '🔴 Мечи тренд'
+        if aroon > 0 and cmf > cfg['flow_buffer']: bias = '🟢 Бичи trend'
+        elif aroon < 0 and cmf < -cfg['flow_buffer']: bias = '🔴 Мечи trend'
         
         with cols[idx]:
             st.metric(label=f"Времева рамка {tf}", value=price_fmt)

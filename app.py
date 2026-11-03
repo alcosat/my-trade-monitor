@@ -92,11 +92,10 @@ with col2:
         st.sidebar.warning("Възстановени фабрични настройки!")
         st.rerun()
 
-# --- КЛИЕНТ ЗА ДАННИ (ОБНОВЕН ЗА GATE.IO - СВОБОДЕН ДОСТЪП ОТ RENDER) ---
+# --- КЛИЕНТ ЗА ДАННИ ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     tf_mapping = {'15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
     
-    # Gate.io изисква формат с долна черта, например BTC_USDT
     formatted_symbol = symbol.upper()
     if 'USDT' in formatted_symbol and '_' not in formatted_symbol:
         formatted_symbol = formatted_symbol.replace('USDT', '_USDT')
@@ -114,7 +113,7 @@ def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, list) and len(data) > 0:
-                # Структура на Gate.io: [Unix, Обем, Close, High, Low, Open]
+                # Фиксирана скоба в листовата компресия
                 df = pd.DataFrame([{
                     'timestamp': pd.to_datetime(float(k[0]), unit='s'),
                     'volume': float(k[1]),
@@ -122,10 +121,9 @@ def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
                     'high': float(k[3]),
                     'low': float(k[4]),
                     'open': float(k[5])
-                } for k in data[::-1]])  # Реверсираме масива, за да съвпадне с логиката на изчисление
+                } for k in data[::-1]])
                 return df
         else:
-            # Алтернативен ендпойнт в случай на локален лимит
             url_alt = f"https://gateapi.io{formatted_symbol}"
             params_alt = {'convert_str': '1', 'type': tf_mapping.get(timeframe, '1h'), 'size': 150}
             res_alt = requests.get(url_alt, params=params_alt, timeout=10)
@@ -246,3 +244,10 @@ for symbol in cfg['symbols']:
                     f"🔔 <b>НОВ СИГНАЛ: {symbol} ({tf})</b>\n"
                     f"Посока: {bias}\n"
                     f"Входна цена: {price_fmt}\n"
+                    f"Stop Loss: ${sl:.4f}\n"
+                    f"Таргети:\n"
+                    f"🎯 TP1: ${tp1:.4f}\n"
+                    f"🎯 TP2: ${tp2:.4f}\n"
+                    f"🎯 TP3: ${tp3:.4f}"
+                )
+                send_telegram_message(msg_text)

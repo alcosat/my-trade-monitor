@@ -13,7 +13,7 @@ from streamlit_autorefresh import st_autorefresh
 # Настройка на уеб страницата
 st.set_page_config(page_title="SMART AMFC Monitor", page_icon="🎯", layout="wide")
 
-# Намираме текущото време в София
+# --- ИНТЕЛЕГЕНТЕН ТАЙМЕР ЗА КРЪГЪЛ ЧАС (БЪЛГАРСКО ВРЕМЕ) ---
 now = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia"))
 current_minute = now.minute
 current_second = now.second
@@ -48,7 +48,8 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return {**default_config, **json.load(f)}
+                data = json.load(f)
+                return {**default_config, **data}
         except:
             return default_config
     return default_config
@@ -93,6 +94,7 @@ with col2:
         for key, val in DEFAULT_INDICATORS.items():
             cfg[key] = val
         save_config(cfg)
+        st.sidebar.warning("Нулирано!")
         st.rerun()
 
 # --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА ---
@@ -113,8 +115,8 @@ def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 def calculate_amfc(df: pd.DataFrame) -> Tuple[float, float, float]:
-    aroon_len = cfg['aroon_period']
-    cmf_len = cfg['cmf_period']
+    aroon_len = int(cfg['aroon_period'])
+    cmf_len = int(cfg['cmf_period'])
     if len(df) < max(aroon_len, cmf_len) + 5:
         return np.nan, np.nan, np.nan
         
@@ -166,69 +168,62 @@ bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
 output_text = f"🔄 Сканиране #{st.session_state.scan_count} - {bg_time} (Българско време)\n"
 output_text += "────────────────────────────────────────────────────────────────────────────────\n"
 
-for symbol in cfg['symbols']:
-    output_text += f"\n📊 {symbol}\n"
-    output_text += "───────────────────────────────────────────────────────────────────────────\n"
-    output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
-    output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
-    
-    for tf in ['15m', '1h', '4h', '1d']:
-        df = get_klines(symbol, tf)
-        if df.empty:
-            output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
-            continue
-            
-        aroon, cmf, atr = calculate_amfc(df)
-        price = df['close'].iloc[-1]
+if not cfg['symbols']:
+    output_text += "\nЛипсват активи за сканиране в конфигурационния файл.\n"
+else:
+    for symbol in cfg['symbols']:
+        output_text += f"\n📊 {symbol}\n"
+        output_text += "───────────────────────────────────────────────────────────────────────────\n"
+        output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
+        output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
         
-        price_str = f"${price:,.2f}" if price >= 1 else f"${price:,.4f}"
-        atr_str = f"{atr:,.2f}" if atr >= 1 else f"{atr:,.4f}"
-        aroon_str = f"{aroon:+5.1f}"
-        cmf_str = f"{cmf:+5.2f}"
-        
-        # Определяне на състояние
-        bias_txt = "Неутрален"
-        if aroon > 0 and cmf > cfg['flow_buffer']: 
-            bias_txt = "📈 Силно Купуване (Buying)"
-        elif aroon < 0 and cmf < -cfg['flow_buffer']: 
-            bias_txt = "📉 Силно Продаване (Selling)"
+        for tf in ['15m', '1h', '4h', '1d']:
+            df = get_klines(symbol, tf)
+            if df.empty:
+                output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
+                continue
+                
+            aroon, cmf, atr = calculate_amfc(df)
+            price = df['close'].iloc[-1]
             
-        # Сигнална логика (изпраща в Telegram само при реална промяна в зоната)
-        state_key = (symbol, tf)
-        prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
-        current_bias_type = 'LONG' if '📈' in bias_txt else 'SHORT' if '📉' in bias_txt else 'NEUTRAL'
-        
-        if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
-            risk = atr * cfg['sl_atr_mult']
-            sl = price - risk if current_bias_type == 'LONG' else price + risk
-            tp1 = price + (risk * cfg['tp1_r']) if current_bias_type == 'LONG' else price - (risk * cfg['tp1_r'])
-            tp2 = price + (risk * cfg['tp2_r']) if current_bias_type == 'LONG' else price - (risk * cfg['tp2_r'])
-            tp3 = price + (risk * cfg['tp3_r']) if current_bias_type == 'LONG' else price - (risk * cfg['tp3_r'])
+            price_str = f"${price:,.2f}" if price >= 1 else f"${price:,.4f}"
+            atr_str = f"{atr:,.2f}" if atr >= 1 else f"{atr:,.4f}"
+            aroon_str = f"{aroon:+5.1f}"
+            cmf_str = f"{cmf:+5.2f}"
             
-            emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
-            sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
+            bias_txt = "Неутрален"
+            if aroon > 0 and cmf > float(cfg['flow_buffer']): 
+                bias_txt = "📈 Силно Купуване (Buying)"
+            elif aroon < 0 and cmf < -float(cfg['flow_buffer']): 
+                bias_txt = "📉 Силно Продаване (Selling)"
+                
+            state_key = (symbol, tf)
+            prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
+            current_bias_type = 'LONG' if '📈' in bias_txt else 'SHORT' if '📉' in bias_txt else 'NEUTRAL'
             
-            msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
-            msg += "──────────────────\n"
-            msg += f"💰 <b>Вход (Цена):</b> {price_str}\n"
-            msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
-            msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
-            msg += "──────────────────\n"
-            msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
-            msg += f"🛑 SL: ${sl:.2f}\n"
-            msg += f"🎯 TP1: ${tp1:.2f}\n"
-            msg += f"🎯 TP2: ${tp2:.2f}\n"
-            msg += f"🎯 TP3: ${tp3:.2f}\n"
-            msg += f"\n⏰ Време: {bg_time}"
-            
-            send_telegram_message(msg)
-            bias_txt += " 💥 [СИГНАЛ ИЗПРАТЕН]"
-            
-        st.session_state.previous_states[state_key] = current_bias_type
-        
-        output_text += f"{tf:5s} | {price_str:>12s} | {aroon_str:>9s} | {cmf_str:>7s} | {atr_str:>9s} | {bias_txt}\n"
-    output_text += "───────────────────────────────────────────────────────────────────────────\n"
-
-# Пресмятане на следващия интервал за показване в дъното
-next_scan_minute = (current_minute // 15 + 1) * 15
-next_hour = now.hour
+            if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
+                risk = atr * float(cfg['sl_atr_mult'])
+                sl = price - risk if current_bias_type == 'LONG' else price + risk
+                tp1 = price + (risk * float(cfg['tp1_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp1_r']))
+                tp2 = price + (risk * float(cfg['tp2_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp2_r']))
+                tp3 = price + (risk * float(cfg['tp3_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp3_r']))
+                
+                emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
+                sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
+                
+                msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
+                msg += "──────────────────\n"
+                msg += f"💰 <b>Вход (Цена):</b> {price_str}\n"
+                msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
+                msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
+                msg += "──────────────────\n"
+                msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
+                msg += f"🛑 SL: ${sl:.2f}\n"
+                msg += f"🎯 TP1: ${tp1:.2f}\n"
+                msg += f"🎯 TP2: ${tp2:.2f}\n"
+                msg += f"🎯 TP3: ${tp3:.2f}\n"
+                msg += f"\n⏰ Време: {bg_time}"
+                
+                send_telegram_message(msg)
+                bias_txt += " 💥 [СИГНАЛ ИЗПРАТЕН]"
+                

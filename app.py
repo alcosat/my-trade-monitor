@@ -49,7 +49,11 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                return {**default_config, **data}
+                # Гарантираме, че symbols се прочита правилно като списък
+                if 'symbols' in data and isinstance(data['symbols'], list) and len(data['symbols']) > 0:
+                    return {**default_config, **data}
+                else:
+                    return {**default_config, **data, 'symbols': ['BTCUSDT', 'ETHUSDT']}
         except:
             return default_config
     return default_config
@@ -58,8 +62,9 @@ def save_config(config_data):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config_data, f, indent=4, ensure_ascii=False)
 
-if 'config' not in st.session_state:
-    st.session_state.config = load_config()
+# ПОПРАВКА: Принудително прочитане на JSON файла при всяко пълно зареждане на страницата
+st.session_state.config = load_config()
+
 if 'previous_states' not in st.session_state:
     st.session_state.previous_states = {}
 if 'scan_count' not in st.session_state:
@@ -168,8 +173,8 @@ bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
 output_text = f"🔄 Сканиране #{st.session_state.scan_count} - {bg_time} (Българско време)\n"
 output_text += "────────────────────────────────────────────────────────────────────────────────\n"
 
-if not cfg['symbols']:
-    output_text += "\nЛипсват активи за сканиране в конфигурационния файл.\n"
+if 'symbols' not in cfg or not cfg['symbols']:
+    output_text += "\nВ момента няма заредени активи. Моля въведете валута горе.\n"
 else:
     for symbol in cfg['symbols']:
         output_text += f"\n📊 {symbol}\n"
@@ -177,8 +182,10 @@ else:
         output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
         output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
         
+        df_15m = get_klines(symbol, '15m')
+        
         for tf in ['15m', '1h', '4h', '1d']:
-            df = get_klines(symbol, tf)
+            df = get_klines(symbol, tf) if tf != '15m' else df_15m
             if df.empty:
                 output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
                 continue
@@ -217,13 +224,3 @@ else:
                 msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
                 msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
                 msg += "──────────────────\n"
-                msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
-                msg += f"🛑 SL: ${sl:.2f}\n"
-                msg += f"🎯 TP1: ${tp1:.2f}\n"
-                msg += f"🎯 TP2: ${tp2:.2f}\n"
-                msg += f"🎯 TP3: ${tp3:.2f}\n"
-                msg += f"\n⏰ Време: {bg_time}"
-                
-                send_telegram_message(msg)
-                bias_txt += " 💥 [СИГНАЛ ИЗПРАТЕН]"
-                

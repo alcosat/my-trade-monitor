@@ -12,9 +12,26 @@ from streamlit_autorefresh import st_autorefresh
 # Настройка на уеб страницата
 st.set_page_config(page_title="SMART AMFC Monitor", page_icon="🎯", layout="wide")
 
-# Активираме автоматично опресняване на всеки 15 минути (15 мин * 60 сек * 1000 милисекунди = 900 000)
-# Това гарантира, че когато сайтът е зареден от робота, той ще сканира на всеки 15 минути сам.
-st_autorefresh(interval=900000, key="amfcrefresh")
+# --- ИНТЕЛЕГЕНТЕН ТАЙМЕР ЗА КРЪГЪЛ ЧАС ---
+# Намираме текущата минута и секунда на сървъра
+now = datetime.now()
+current_minute = now.minute
+current_second = now.second
+
+# Пресмятаме колко минути остават до следващия кръгъл 15-минутен интервал (:00, :15, :30, :45)
+minutes_to_next = 15 - (current_minute % 15)
+
+# Превръщаме оставащото време в милисекунди
+# (Минутите до следващия интервал * 60 сек) - изминалите секунди от текущата минута
+total_seconds_to_wait = (minutes_to_next * 60) - current_second
+
+# Ако сме точно в секундата на интервала, изчакваме пълни 15 минути
+if total_seconds_to_wait <= 0:
+    total_seconds_to_wait = 900
+
+# Подаваме динамичното време в милисекунди на уеб опреснителя
+st_autorefresh(interval=total_seconds_to_wait * 1000, key="amfcrefresh")
+# ──────────────────────────────────────────
 
 CONFIG_FILE = "smart_amfc_monitor_config.json"
 
@@ -130,7 +147,7 @@ def send_telegram_message(msg: str):
 # --- ГЛАВЕН УЕБ ИНТЕРФЕЙС ---
 st.title("🎯 SMART AMFC Пазарно Табло")
 st.write(f"Последно автоматично сканиране: **{datetime.now().strftime('%H:%M:%S')}**")
-st.info("Ботът автоматично опреснява и сканира пазара на заден фон на всеки 15 минути.")
+st.info(f"Ботът е синхронизиран! Следващо точно пазарно сканиране след {minutes_to_next} мин.")
 
 new_symbol = st.text_input("➕ Добави нов актив временно (напр. SOLUSDT):").strip().upper()
 if new_symbol and new_symbol not in cfg['symbols']:
@@ -138,7 +155,6 @@ if new_symbol and new_symbol not in cfg['symbols']:
     save_config(cfg)
     st.rerun()
 
-# Изпълняваме сканирането автоматично при всяко презареждане на уеб страницата
 st.write("### 📈 Текущи Пазарни Резултати")
 
 for symbol in cfg['symbols']:
@@ -164,7 +180,6 @@ for symbol in cfg['symbols']:
             st.write(f"**Състояние:** {bias}")
             st.write(f"Aroon: `{aroon:+.1f}` | CMF: `{cmf:+.2f}`")
             
-            # --- ЛОГИКА ЗА АВТОМАТИЧЕН СИГНАЛ САМО ПРИ ПРОМЯНА (ВХОД) ---
             state_key = (symbol, tf)
             prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
             current_bias_type = 'LONG' if '🟢' in bias else 'SHORT' if '🔴' in bias else 'NEUTRAL'

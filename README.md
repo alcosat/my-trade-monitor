@@ -1,0 +1,2 @@
+# my-trade-monitor
+Trading

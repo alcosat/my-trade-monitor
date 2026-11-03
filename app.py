@@ -5,6 +5,7 @@ import requests
 import json
 import os
 from datetime import datetime
+import zoneinfo  # Библиотека за управление на часовите зони
 from typing import Dict, List, Tuple
 # Добавяме библиотеката за автоматично уеб опресняване
 from streamlit_autorefresh import st_autorefresh
@@ -12,9 +13,9 @@ from streamlit_autorefresh import st_autorefresh
 # Настройка на уеб страницата
 st.set_page_config(page_title="SMART AMFC Monitor", page_icon="🎯", layout="wide")
 
-# --- ИНТЕЛЕГЕНТЕН ТАЙМЕР ЗА КРЪГЪЛ ЧАС ---
-# Намираме текущата минута и секунда на сървъра
-now = datetime.now()
+# --- ИНТЕЛЕГЕНТЕН ТАЙМЕР ЗА КРЪГЪЛ ЧАС (БЪЛГАРСКО ВРЕМЕ) ---
+# Намираме текущото време в София
+now = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia"))
 current_minute = now.minute
 current_second = now.second
 
@@ -22,16 +23,15 @@ current_second = now.second
 minutes_to_next = 15 - (current_minute % 15)
 
 # Превръщаме оставащото време в милисекунди
-# (Минутите до следващия интервал * 60 сек) - изминалите секунди от текущата минута
 total_seconds_to_wait = (minutes_to_next * 60) - current_second
 
 # Ако сме точно в секундата на интервала, изчакваме пълни 15 минути
 if total_seconds_to_wait <= 0:
     total_seconds_to_wait = 900
 
-# Подаваме динамичното време в милисекунди на уеб опреснителя
+# Подаваме динамичното време в милисекунди на уеб опреснителното устройство
 st_autorefresh(interval=total_seconds_to_wait * 1000, key="amfcrefresh")
-# ──────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 
 CONFIG_FILE = "smart_amfc_monitor_config.json"
 
@@ -146,7 +146,8 @@ def send_telegram_message(msg: str):
 
 # --- ГЛАВЕН УЕБ ИНТЕРФЕЙС ---
 st.title("🎯 SMART AMFC Пазарно Табло")
-st.write(f"Последно автоматично сканиране: **{datetime.now().strftime('%H:%M:%S')}**")
+bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
+st.write(f"Последно автоматично сканиране: **{bg_time}** (Българско време)")
 st.info(f"Ботът е синхронизиран! Следващо точно пазарно сканиране след {minutes_to_next} мин.")
 
 new_symbol = st.text_input("➕ Добави нов актив временно (напр. SOLUSDT):").strip().upper()
@@ -205,7 +206,9 @@ for symbol in cfg['symbols']:
                 msg += f"🎯 TP1: ${tp1:.2f}\n"
                 msg += f"🎯 TP2: ${tp2:.2f}\n"
                 msg += f"🎯 TP3: ${tp3:.2f}\n"
-                msg += f"\n⏰ Време: {datetime.now().strftime('%H:%M:%S')}"
+                
+                bg_msg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
+                msg += f"\n⏰ Време: {bg_msg_time}"
                 
                 send_telegram_message(msg)
                 st.success(f"💥 Изпратен Telegram Сигнал за {tf}!")

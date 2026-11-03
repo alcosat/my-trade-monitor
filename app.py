@@ -102,7 +102,7 @@ with col2:
         st.sidebar.warning("Възстановени фабрични настройки!")
         st.rerun()
 
-# --- КЛИЕНТ ЗА ДАННИ (КОРИГИРАН ЗА КОРЕКТНО ПОДРЕЖДАНЕ НА BINANCE СТРУКТУРАТА) ---
+# --- КЛИЕНТ ЗА ДАННИ ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     try:
         url = "https://binance.com"
@@ -110,7 +110,7 @@ def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
         res = requests.get(url, params=params, timeout=10).json()
         
         if isinstance(res, list) and len(res) > 0:
-            # ПОПРАВКА: Данните от Binance пристигат като индексиран списък от масиви, а не като речник
+            # ПОПРАВКА: Директно извличане на индексите от списъка на Binance
             df = pd.DataFrame([{
                 'timestamp': pd.to_datetime(k[0], unit='ms'), 
                 'open': float(k[1]),
@@ -144,6 +144,7 @@ def calculate_amfc(df: pd.DataFrame) -> Tuple[float, float, float]:
     aroon_osc = aroon_up - aroon_down
 
     hl = df['high'] - df['low']
+    # ПОПРАВКА: Използване на 'volume' (както е дефинирано в get_klines за Binance)
     mfv = np.where(hl > 0, ((2 * df['close'] - df['high'] - df['low']) / hl) * df['volume'], 0.0)
     vv = np.where(hl > 0, df['volume'], 0.0)
     cmf = (pd.Series(mfv).rolling(cmf_len).sum() / pd.Series(vv).rolling(cmf_len).sum()).iloc[-1]

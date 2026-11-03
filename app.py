@@ -35,15 +35,20 @@ st_autorefresh(interval=total_seconds_to_wait * 1000, key="amfcrefresh")
 
 CONFIG_FILE = "smart_amfc_monitor_config.json"
 
+# Задаваме твърди фабрични настройки по подразбиране
+DEFAULT_INDICATORS = {
+    'aroon_period': 14,
+    'cmf_period': 20,
+    'flow_buffer': 0.05,
+    'confirm_bars': 5,
+    'sl_atr_mult': 1.5,
+    'tp1_r': 1.0, 'tp2_r': 2.0, 'tp3_r': 3.0
+}
+
 def load_config():
     default_config = {
         'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'],
-        'aroon_period': 14,
-        'cmf_period': 20,
-        'flow_buffer': 0.05,
-        'confirm_bars': 5,
-        'sl_atr_mult': 1.5,
-        'tp1_r': 1.0, 'tp2_r': 2.0, 'tp3_r': 3.0,
+        **DEFAULT_INDICATORS,
         'bot_token': '', 'chat_id': ''
     }
     if os.path.exists(CONFIG_FILE):
@@ -67,27 +72,36 @@ cfg = st.session_state.config
 
 # --- СТРАНИЧЕН ПАНЕЛ ---
 st.sidebar.title("⚙️ Настройки на Системата")
-st.sidebar.subheader("🤖 Telegram Бот")
 
-# ✅ ПРОМЯНА: Скриваме Bot Token и Chat ID, като ги правим от тип "password"
-cfg['bot_token'] = st.sidebar.text_input("Бот Токен", value=cfg['bot_token'], type="password")
-cfg['chat_id'] = st.sidebar.text_input("Chat ID", value=cfg['chat_id'], type="password")
-
+# 📊 Параметри Индикатори
 st.sidebar.subheader("📊 Параметри Индикатори")
-cfg['aroon_period'] = st.sidebar.number_input("Aroon период", min_value=2, max_value=200, value=cfg['aroon_period'])
-cfg['cmf_period'] = st.sidebar.number_input("CMF период", min_value=2, max_value=200, value=cfg['cmf_period'])
-cfg['flow_buffer'] = st.sidebar.number_input("Flow Buffer", min_value=0.0, max_value=0.5, value=cfg['flow_buffer'], step=0.01)
-cfg['confirm_bars'] = st.sidebar.number_input("Прозорец потвърждение (барове)", min_value=1, max_value=20, value=cfg['confirm_bars'])
+cfg['aroon_period'] = st.sidebar.number_input("Aroon период", min_value=2, max_value=200, value=int(cfg['aroon_period']))
+cfg['cmf_period'] = st.sidebar.number_input("CMF период", min_value=2, max_value=200, value=int(cfg['cmf_period']))
+cfg['flow_buffer'] = st.sidebar.number_input("Flow Buffer", min_value=0.0, max_value=0.5, value=float(cfg['flow_buffer']), step=0.01)
+cfg['confirm_bars'] = st.sidebar.number_input("Прозорец потвърждение (барове)", min_value=1, max_value=20, value=int(cfg['confirm_bars']))
 
+# 📐 Риск Мениджмънт
 st.sidebar.subheader("📐 Риск Мениджмънт (ATR)")
-cfg['sl_atr_mult'] = st.sidebar.number_input("Stop Loss ATR множител", min_value=0.1, value=cfg['sl_atr_mult'], step=0.1)
-cfg['tp1_r'] = st.sidebar.number_input("TP1 (R множител)", min_value=0.1, value=cfg['tp1_r'], step=0.1)
-cfg['tp2_r'] = st.sidebar.number_input("TP2 (R множител)", min_value=0.1, value=cfg['tp2_r'], step=0.1)
-cfg['tp3_r'] = st.sidebar.number_input("TP3 (R множител)", min_value=0.1, value=cfg['tp3_r'], step=0.1)
+cfg['sl_atr_mult'] = st.sidebar.number_input("Stop Loss ATR множител", min_value=0.1, value=float(cfg['sl_atr_mult']), step=0.1)
+cfg['tp1_r'] = st.sidebar.number_input("TP1 (R множител)", min_value=0.1, value=float(cfg['tp1_r']), step=0.1)
+cfg['tp2_r'] = st.sidebar.number_input("TP2 (R множител)", min_value=0.1, value=float(cfg['tp2_r']), step=0.1)
+cfg['tp3_r'] = st.sidebar.number_input("TP3 (R множител)", min_value=0.1, value=float(cfg['tp3_r']), step=0.1)
 
-if st.sidebar.button("💾 Запази настройките"):
-    save_config(cfg)
-    st.sidebar.success("Конфигурацията е запазена!")
+# Бутони за управление на конфигурацията
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    if st.button("💾 Запази"):
+        save_config(cfg)
+        st.success("Запазено!")
+
+with col2:
+    # ✅ НОВА ФУНКЦИЯ: Бутон за възстановяване на фабричните настройки на индикаторите
+    if st.button("🔄 Фабрични"):
+        for key, val in DEFAULT_INDICATORS.items():
+            cfg[key] = val
+        save_config(cfg)
+        st.sidebar.warning("Възстановени фабрични настройки!")
+        st.rerun()
 
 # --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
@@ -175,8 +189,8 @@ for symbol in cfg['symbols']:
         price_fmt = f"${price:.2f}" if price >= 1 else f"${price:.4f}"
         
         bias = '⚪ Неутрален'
-        if aroon > 0 and cmf > cfg['flow_buffer']: bias = '🟢 Бичи trend'
-        elif aroon < 0 and cmf < -cfg['flow_buffer']: bias = '🔴 Мечи trend'
+        if aroon > 0 and cmf > cfg['flow_buffer']: bias = '🟢 Бичи тренд'
+        elif aroon < 0 and cmf < -cfg['flow_buffer']: bias = '🔴 Мечи тренд'
         
         with cols[idx]:
             st.metric(label=f"Времева рамка {tf}", value=price_fmt)

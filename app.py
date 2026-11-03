@@ -49,11 +49,11 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                # Гарантираме, че symbols се прочита правилно като списък
+                # Валидираме списъка с валути
                 if 'symbols' in data and isinstance(data['symbols'], list) and len(data['symbols']) > 0:
                     return {**default_config, **data}
                 else:
-                    return {**default_config, **data, 'symbols': ['BTCUSDT', 'ETHUSDT']}
+                    return {**default_config, **data, 'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']}
         except:
             return default_config
     return default_config
@@ -62,9 +62,9 @@ def save_config(config_data):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config_data, f, indent=4, ensure_ascii=False)
 
-# ПОПРАВКА: Принудително прочитане на JSON файла при всяко пълно зареждане на страницата
-st.session_state.config = load_config()
-
+# ПОПРАВКА ЗА СТАБИЛНОСТ НА СЕСИЯТА: Прочитаме JSON файла САМО ако сесията е празна
+if 'config' not in st.session_state:
+    st.session_state.config = load_config()
 if 'previous_states' not in st.session_state:
     st.session_state.previous_states = {}
 if 'scan_count' not in st.session_state:
@@ -99,8 +99,7 @@ with col2:
         for key, val in DEFAULT_INDICATORS.items():
             cfg[key] = val
         save_config(cfg)
-        st.sidebar.warning("Нулирано!")
-        st.rerun()
+        st.experimental_rerun()
 
 # --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
@@ -165,7 +164,7 @@ new_symbol = st.text_input("➕ Добави нов актив временно 
 if new_symbol and new_symbol not in cfg['symbols']:
     cfg['symbols'].append(new_symbol)
     save_config(cfg)
-    st.rerun()
+    st.experimental_rerun()
 
 # Изграждане на текстовия лог (Конзолен стил)
 bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
@@ -173,54 +172,59 @@ bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
 output_text = f"🔄 Сканиране #{st.session_state.scan_count} - {bg_time} (Българско време)\n"
 output_text += "────────────────────────────────────────────────────────────────────────────────\n"
 
-if 'symbols' not in cfg or not cfg['symbols']:
-    output_text += "\nВ момента няма заредени активи. Моля въведете валута горе.\n"
-else:
-    for symbol in cfg['symbols']:
-        output_text += f"\n📊 {symbol}\n"
-        output_text += "───────────────────────────────────────────────────────────────────────────\n"
-        output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
-        output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
+for symbol in cfg['symbols']:
+    output_text += f"\n📊 {symbol}\n"
+    output_text += "───────────────────────────────────────────────────────────────────────────\n"
+    output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
+    output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
+    
+    df_15m = get_klines(symbol, '15m')
+    
+    for tf in ['15m', '1h', '4h', '1d']:
+        df = get_klines(symbol, tf) if tf != '15m' else df_15m
+        if df.empty:
+            output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
+            continue
+            
+        aroon, cmf, atr = calculate_amfc(df)
+        price = df['close'].iloc[-1]
         
-        df_15m = get_klines(symbol, '15m')
+        price_str = f"${price:,.2f}" if price >= 1 else f"${price:,.4f}"
+        atr_str = f"{atr:,.2f}" if atr >= 1 else f"{atr:,.4f}"
+        aroon_str = f"{aroon:+5.1f}"
+        cmf_str = f"{cmf:+5.2f}"
         
-        for tf in ['15m', '1h', '4h', '1d']:
-            df = get_klines(symbol, tf) if tf != '15m' else df_15m
-            if df.empty:
-                output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
-                continue
-                
-            aroon, cmf, atr = calculate_amfc(df)
-            price = df['close'].iloc[-1]
+        bias_txt = "Неутрален"
+        if aroon > 0 and cmf > float(cfg['flow_buffer']): 
+            bias_txt = "📈 Силно Купуване (Buying)"
+        elif aroon < 0 and cmf < -float(cfg['flow_buffer']): 
+            bias_txt = "📉 Силно Продаване (Selling)"
             
-            price_str = f"${price:,.2f}" if price >= 1 else f"${price:,.4f}"
-            atr_str = f"{atr:,.2f}" if atr >= 1 else f"{atr:,.4f}"
-            aroon_str = f"{aroon:+5.1f}"
-            cmf_str = f"{cmf:+5.2f}"
+        state_key = (symbol, tf)
+        prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
+        current_bias_type = 'LONG' if '📈' in bias_txt else 'SHORT' if '📉' in bias_txt else 'NEUTRAL'
+        
+        if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
+            risk = atr * float(cfg['sl_atr_mult'])
+            sl = price - risk if current_bias_type == 'LONG' else price + risk
+            tp1 = price + (risk * float(cfg['tp1_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp1_r']))
+            tp2 = price + (risk * float(cfg['tp2_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp2_r']))
+            tp3 = price + (risk * float(cfg['tp3_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp3_r']))
             
-            bias_txt = "Неутрален"
-            if aroon > 0 and cmf > float(cfg['flow_buffer']): 
-                bias_txt = "📈 Силно Купуване (Buying)"
-            elif aroon < 0 and cmf < -float(cfg['flow_buffer']): 
-                bias_txt = "📉 Силно Продаване (Selling)"
-                
-            state_key = (symbol, tf)
-            prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
-            current_bias_type = 'LONG' if '📈' in bias_txt else 'SHORT' if '📉' in bias_txt else 'NEUTRAL'
+            emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
+            sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
             
-            if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
-                risk = atr * float(cfg['sl_atr_mult'])
-                sl = price - risk if current_bias_type == 'LONG' else price + risk
-                tp1 = price + (risk * float(cfg['tp1_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp1_r']))
-                tp2 = price + (risk * float(cfg['tp2_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp2_r']))
-                tp3 = price + (risk * float(cfg['tp3_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp3_r']))
-                
-                emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
-                sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
-                
-                msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
-                msg += "──────────────────\n"
-                msg += f"💰 <b>Вход (Цена):</b> {price_str}\n"
-                msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
-                msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
-                msg += "──────────────────\n"
+            msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
+            msg += "──────────────────\n"
+            msg += f"💰 <b>Вход (Цена):</b> {price_str}\n"
+            msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
+            msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
+            msg += "──────────────────\n"
+            msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
+            msg += f"🛑 SL: ${sl:.2f}\n"
+            msg += f"🎯 TP1: ${tp1:.2f}\n"
+            msg += f"🎯 TP2: ${tp2:.2f}\n"
+            msg += f"🎯 TP3: ${tp3:.2f}\n"
+            msg += f"\n⏰ Време: {bg_time}"
+            
+            send_telegram_message(msg)

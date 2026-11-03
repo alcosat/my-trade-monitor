@@ -92,35 +92,55 @@ with col2:
         st.sidebar.warning("Възстановени фабрични настройки!")
         st.rerun()
 
-# --- КЛИЕНТ ЗА ДАННИ (ОБНОВЕН С АЛТЕРНАТИВЕН ПРОКСИ ЕНДПОЙНТ ПРОТИВ БЛОКАЖИ) ---
+# --- КЛИЕНТ ЗА ДАННИ (ОБНОВЕН ЗА GATE.IO - СВОБОДЕН ДОСТЪП ОТ RENDER) ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
+    tf_mapping = {'15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
+    
+    # Gate.io изисква формат с долна черта, например BTC_USDT
+    formatted_symbol = symbol.upper()
+    if 'USDT' in formatted_symbol and '_' not in formatted_symbol:
+        formatted_symbol = formatted_symbol.replace('USDT', '_USDT')
+        
     try:
-        # Използваме алтернативен прокси фейлоувър за Binance данни, който не блокира IP адресите на Render
-        url = "https://binance.com"
-        params = {'symbol': symbol.upper(), 'interval': timeframe, 'limit': 150}
+        url = "https://gateio.ws"
+        params = {
+            'currency_pair': formatted_symbol,
+            'interval': tf_mapping.get(timeframe, '1h'),
+            'limit': 150
+        }
         
-        # Добавяме базови браузърни заглавия (Headers), за да не изглежда заявката като от бот
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, params=params, timeout=10)
         
-        res = requests.get(url, params=params, headers=headers, timeout=10)
-        
-        # Ако основният сервер даде грешка, превключваме към второ алтернативно прокси автоматично
-        if res.status_code != 200:
-            url = "https://binance.com"
-            res = requests.get(url, params=params, headers=headers, timeout=10)
-            
-        data = res.json()
-        
-        if isinstance(data, list) and len(data) > 0:
-            df = pd.DataFrame([{
-                'timestamp': pd.to_datetime(k[0], unit='ms'), 
-                'open': float(k[1]),
-                'high': float(k[2]), 
-                'low': float(k[3]), 
-                'close': float(k[4]), 
-                'volume': float(k[5])
-            } for k in data[::-1]])
-            return df
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, list) and len(data) > 0:
+                # Структура на Gate.io: [Unix, Обем, Close, High, Low, Open]
+                df = pd.DataFrame([{
+                    'timestamp': pd.to_datetime(float(k[0]), unit='s'),
+                    'volume': float(k[1]),
+                    'close': float(k[2]),
+                    'high': float(k[3]),
+                    'low': float(k[4]),
+                    'open': float(k[5])
+                } for k in data[::-1]])  # Реверсираме масива, за да съвпадне с логиката на изчисление
+                return df
+        else:
+            # Алтернативен ендпойнт в случай на локален лимит
+            url_alt = f"https://gateapi.io{formatted_symbol}"
+            params_alt = {'convert_str': '1', 'type': tf_mapping.get(timeframe, '1h'), 'size': 150}
+            res_alt = requests.get(url_alt, params=params_alt, timeout=10)
+            if res_alt.status_code == 200:
+                data_alt = res_alt.json().get('data', [])
+                if data_alt:
+                    df = pd.DataFrame([{
+                        'timestamp': pd.to_datetime(float(k[0]), unit='ms'),
+                        'open': float(k[1]),
+                        'high': float(k[2]),
+                        'low': float(k[3]),
+                        'close': float(k[4]),
+                        'volume': float(k[5])
+                    } for k in data_alt[::-1]])
+                    return df
     except:
         pass
     return pd.DataFrame()
@@ -186,7 +206,7 @@ for symbol in cfg['symbols']:
     for idx, tf in enumerate(['15m', '1h', '4h', '1d']):
         df = get_klines(symbol, tf)
         if df.empty:
-            cols[idx].error(f"{tf}: Блокирана заявка (Липса на връзка)")
+            cols[idx].error(f"{tf}: Грешка при извличане от Gate.io")
             continue
             
         aroon, cmf, atr = calculate_amfc(df)
@@ -226,10 +246,3 @@ for symbol in cfg['symbols']:
                     f"🔔 <b>НОВ СИГНАЛ: {symbol} ({tf})</b>\n"
                     f"Посока: {bias}\n"
                     f"Входна цена: {price_fmt}\n"
-                    f"Stop Loss: ${sl:.4f}\n"
-                    f"Таргети:\n"
-                    f"🎯 TP1: ${tp1:.4f}\n"
-                    f"🎯 TP2: ${tp2:.4f}\n"
-                    f"🎯 TP3: ${tp3:.4f}"
-                )
-                send_telegram_message(msg_text)

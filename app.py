@@ -5,9 +5,8 @@ import requests
 import json
 import os
 from datetime import datetime
-import zoneinfo  # Библиотека за управление на часовите зони
+import zoneinfo
 from typing import Dict, List, Tuple
-# Добавяме библиотеката за автоматично уеб опресняване
 from streamlit_autorefresh import st_autorefresh
 
 # Настройка на уеб страницата
@@ -18,14 +17,12 @@ now = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia"))
 current_minute = now.minute
 current_second = now.second
 
-# Пресмятаме колко минути остават до следващия кръгъл 15-минутен интервал (:00, :15, :30, :45)
 minutes_to_next = 15 - (current_minute % 15)
 total_seconds_to_wait = (minutes_to_next * 60) - current_second
 
 if total_seconds_to_wait <= 0:
     total_seconds_to_wait = 900
 
-# Подаваме динамичното време в милисекунди на уеб опреснителното устройство
 st_autorefresh(interval=total_seconds_to_wait * 1000, key="amfcrefresh")
 
 CONFIG_FILE = "smart_amfc_monitor_config.json"
@@ -39,7 +36,8 @@ DEFAULT_INDICATORS = {
     'tp1_r': 1.0, 'tp2_r': 2.0, 'tp3_r': 3.0
 }
 
-def load_config():
+def load_config_static():
+    """Безопасно прочитане на първоначалните настройки без запис на диска"""
     default_config = {
         'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'],
         **DEFAULT_INDICATORS,
@@ -49,30 +47,23 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                # Валидираме списъка с валути
                 if 'symbols' in data and isinstance(data['symbols'], list) and len(data['symbols']) > 0:
                     return {**default_config, **data}
-                else:
-                    return {**default_config, **data, 'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']}
+                return {**default_config, **data, 'symbols': ['BTCUSDT', 'ETHUSDT']}
         except:
             return default_config
     return default_config
 
-def save_config(config_data):
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(config_data, f, indent=4, ensure_ascii=False)
-
-# ПОПРАВКА ЗА СТАБИЛНОСТ НА СЕСИЯТА: Прочитаме JSON файла САМО ако сесията е празна
-if 'config' not in st.session_state:
-    st.session_state.config = load_config()
+# Инициализиране на сесията в RAM паметта на Streamlit
+if 'runtime_cfg' not in st.session_state:
+    st.session_state.runtime_cfg = load_config_static()
 if 'previous_states' not in st.session_state:
     st.session_state.previous_states = {}
 if 'scan_count' not in st.session_state:
     st.session_state.scan_count = 0
 
-# Увеличаваме брояча при всяко автоматично презареждане
 st.session_state.scan_count += 1
-cfg = st.session_state.config
+cfg = st.session_state.runtime_cfg
 
 # --- СТРАНИЧЕН ПАНЕЛ ---
 st.sidebar.title("⚙️ Настройки на Системата")
@@ -91,15 +82,15 @@ cfg['tp3_r'] = st.sidebar.number_input("TP3 (R множител)", min_value=0.1
 
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    if st.button("💾 Запази"):
-        save_config(cfg)
-        st.success("Запазено!")
+    if st.button("💾 Приложи"):
+        st.session_state.runtime_cfg = cfg
+        st.success("Приложено в RAM!")
 with col2:
     if st.button("🔄 Фабрични"):
         for key, val in DEFAULT_INDICATORS.items():
             cfg[key] = val
-        save_config(cfg)
-        st.experimental_rerun()
+        st.session_state.runtime_cfg = cfg
+        st.rerun()
 
 # --- ЧИСТА МАТЕМАТИЧЕСКА ЛОГИКА ---
 def get_klines(symbol: str, timeframe: str) -> pd.DataFrame:
@@ -150,7 +141,7 @@ def calculate_amfc(df: pd.DataFrame) -> Tuple[float, float, float]:
     return float(aroon_osc), float(cmf), float(atr)
 
 def send_telegram_message(msg: str):
-    if cfg['bot_token'] and cfg['chat_id']:
+    if cfg.get('bot_token') and cfg.get('chat_id'):
         try:
             url = f"https://telegram.org{cfg['bot_token']}/sendMessage"
             requests.get(url, params={'chat_id': cfg['chat_id'], 'text': msg, 'parse_mode': 'HTML'}, timeout=10)
@@ -160,71 +151,76 @@ def send_telegram_message(msg: str):
 # --- ГЛАВЕН УЕБ ИНТЕРФЕЙС ---
 st.title("🎯 SMART AMFC Конзолен Монитор")
 
+# Добавяне на активи директно в сесията (RAM)
 new_symbol = st.text_input("➕ Добави нов актив временно (напр. SOLUSDT):").strip().upper()
 if new_symbol and new_symbol not in cfg['symbols']:
     cfg['symbols'].append(new_symbol)
-    save_config(cfg)
-    st.experimental_rerun()
+    st.session_state.runtime_cfg = cfg
+    st.rerun()
 
-# Изграждане на текстовия лог (Конзолен стил)
 bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
 
 output_text = f"🔄 Сканиране #{st.session_state.scan_count} - {bg_time} (Българско време)\n"
 output_text += "────────────────────────────────────────────────────────────────────────────────\n"
 
-for symbol in cfg['symbols']:
-    output_text += f"\n📊 {symbol}\n"
-    output_text += "───────────────────────────────────────────────────────────────────────────\n"
-    output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
-    output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
-    
-    df_15m = get_klines(symbol, '15m')
-    
-    for tf in ['15m', '1h', '4h', '1d']:
-        df = get_klines(symbol, tf) if tf != '15m' else df_15m
-        if df.empty:
-            output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
-            continue
-            
-        aroon, cmf, atr = calculate_amfc(df)
-        price = df['close'].iloc[-1]
+if 'symbols' not in cfg or not cfg['symbols']:
+    output_text += "\nНяма заредени активи в RAM паметта.\n"
+else:
+    for symbol in cfg['symbols']:
+        output_text += f"\n📊 {symbol}\n"
+        output_text += "───────────────────────────────────────────────────────────────────────────\n"
+        output_text += f"{'TF':5s} | {'PRICE':>12s} | {'AROON OSC':>9s} | {'CMF':>7s} | {'ATR':>9s} | СЪСТОЯНИЕ / СИГНАЛ\n"
+        output_text += "──────┼──────────────┼───────────┼─────────┼─────────┼──────────────────────────\n"
         
-        price_str = f"${price:,.2f}" if price >= 1 else f"${price:,.4f}"
-        atr_str = f"{atr:,.2f}" if atr >= 1 else f"{atr:,.4f}"
-        aroon_str = f"{aroon:+5.1f}"
-        cmf_str = f"{cmf:+5.2f}"
+        df_15m = get_klines(symbol, '15m')
         
-        bias_txt = "Неутрален"
-        if aroon > 0 and cmf > float(cfg['flow_buffer']): 
-            bias_txt = "📈 Силно Купуване (Buying)"
-        elif aroon < 0 and cmf < -float(cfg['flow_buffer']): 
-            bias_txt = "📉 Силно Продаване (Selling)"
+        for tf in ['15m', '1h', '4h', '1d']:
+            df = get_klines(symbol, tf) if tf != '15m' else df_15m
+            if df.empty:
+                output_text += f"{tf:5s} | {'Липса на данни':^57s}\n"
+                continue
+                
+            aroon, cmf, atr = calculate_amfc(df)
+            price = df['close'].iloc[-1]
             
-        state_key = (symbol, tf)
-        prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
-        current_bias_type = 'LONG' if '📈' in bias_txt else 'SHORT' if '📉' in bias_txt else 'NEUTRAL'
-        
-        if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
-            risk = atr * float(cfg['sl_atr_mult'])
-            sl = price - risk if current_bias_type == 'LONG' else price + risk
-            tp1 = price + (risk * float(cfg['tp1_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp1_r']))
-            tp2 = price + (risk * float(cfg['tp2_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp2_r']))
-            tp3 = price + (risk * float(cfg['tp3_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp3_r']))
+            price_str = f"${price:,.2f}" if price >= 1 else f"${price:,.4f}"
+            atr_str = f"{atr:,.2f}" if atr >= 1 else f"{atr:,.4f}"
+            aroon_str = f"{aroon:+5.1f}"
+            cmf_str = f"{cmf:+5.2f}"
             
-            emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
-            sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
+            bias_txt = "Неутрален"
+            if aroon > 0 and cmf > float(cfg['flow_buffer']): 
+                bias_txt = "📈 Силно Купуване (Buying)"
+            elif aroon < 0 and cmf < -float(cfg['flow_buffer']): 
+                bias_txt = "📉 Силно Продаване (Selling)"
+                
+            state_key = (symbol, tf)
+            prev_bias = st.session_state.previous_states.get(state_key, 'NEUTRAL')
+            current_bias_type = 'LONG' if '📈' in bias_txt else 'SHORT' if '📉' in bias_txt else 'NEUTRAL'
             
-            msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
-            msg += "──────────────────\n"
-            msg += f"💰 <b>Вход (Цена):</b> {price_str}\n"
-            msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
-            msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
-            msg += "──────────────────\n"
-            msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
-            msg += f"🛑 SL: ${sl:.2f}\n"
-            msg += f"🎯 TP1: ${tp1:.2f}\n"
-            msg += f"🎯 TP2: ${tp2:.2f}\n"
-            msg += f"🎯 TP3: ${tp3:.2f}\n"
-            msg += f"\n⏰ Време: {bg_time}"
-            
-            send_telegram_message(msg)
+            if current_bias_type != prev_bias and current_bias_type != 'NEUTRAL':
+                risk = atr * float(cfg['sl_atr_mult'])
+                sl = price - risk if current_bias_type == 'LONG' else price + risk
+                tp1 = price + (risk * float(cfg['tp1_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp1_r']))
+                tp2 = price + (risk * float(cfg['tp2_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp2_r']))
+                tp3 = price + (risk * float(cfg['tp3_r'])) if current_bias_type == 'LONG' else price - (risk * float(cfg['tp3_r']))
+                
+                emoji = "🟢" if current_bias_type == 'LONG' else "🔴"
+                sig_txt = "BUY" if current_bias_type == 'LONG' else "SELL"
+                
+                msg = f"{emoji} <b>{symbol} – {sig_txt} СИГНАЛ</b> {emoji}\n"
+                msg += "──────────────────\n"
+                msg += f"💰 <b>Вход (Цена):</b> {price_str}\n"
+                msg += f"📊 <b>Таймфрейм:</b> {tf}\n"
+                msg += f"📊 <b>Aroon:</b> {aroon_str} | <b>CMF:</b> {cmf_str}\n"
+                msg += "──────────────────\n"
+                msg += "📐 <b>УПРАВЛЕНИЕ НА РИСКА (ATR):</b>\n"
+                msg += f"🛑 SL: ${sl:.2f}\n"
+                msg += f"🎯 TP1: ${tp1:.2f}\n"
+                msg += f"🎯 TP2: ${tp2:.2f}\n"
+                msg += f"🎯 TP3: ${tp3:.2f}\n"
+                msg += f"\n⏰ Време: {bg_time}"
+                
+                send_telegram_message(msg)
+                bias_txt += " 💥 [СИГНАЛ ИЗПРАТЕН]"
+                

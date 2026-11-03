@@ -12,18 +12,10 @@ from streamlit_autorefresh import st_autorefresh
 # Настройка на уеб страницата
 st.set_page_config(page_title="SMART AMFC Monitor", page_icon="🎯", layout="wide")
 
-# --- ИНТЕЛЕГЕНТЕН ТАЙМЕР ЗА КРЪГЪЛ ЧАС (БЪЛГАРСКО ВРЕМЕ) ---
-now = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia"))
-current_minute = now.minute
-current_second = now.second
-
-minutes_to_next = 15 - (current_minute % 15)
-total_seconds_to_wait = (minutes_to_next * 60) - current_second
-
-if total_seconds_to_wait <= 0:
-    total_seconds_to_wait = 900
-
-st_autorefresh(interval=total_seconds_to_wait * 1000, key="amfcrefresh")
+# --- СТАБИЛЕН ТАЙМЕР ЗА ПРЕЗАРЕЖДАНЕ ---
+# Опресняваме страницата на всеки 5 минути (300 000 милисекунди),
+# за да може кодът да засича новите свещи веднага след затварянето им.
+st_autorefresh(interval=300000, key="amfcrefresh_stable")
 
 CONFIG_FILE = "smart_amfc_monitor_config.json"
 
@@ -37,7 +29,6 @@ DEFAULT_INDICATORS = {
 }
 
 def load_config_static():
-    """Безопасно прочитане на първоначалните настройки без запис на диска"""
     default_config = {
         'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'],
         **DEFAULT_INDICATORS,
@@ -49,12 +40,11 @@ def load_config_static():
                 data = json.load(f)
                 if 'symbols' in data and isinstance(data['symbols'], list) and len(data['symbols']) > 0:
                     return {**default_config, **data}
-                return {**default_config, **data, 'symbols': ['BTCUSDT', 'ETHUSDT']}
         except:
-            return default_config
+            pass
     return default_config
 
-# Инициализиране на сесията в RAM паметта на Streamlit
+# Зареждане на конфигурацията в RAM на сесията
 if 'runtime_cfg' not in st.session_state:
     st.session_state.runtime_cfg = load_config_static()
 if 'previous_states' not in st.session_state:
@@ -84,7 +74,7 @@ col1, col2 = st.sidebar.columns(2)
 with col1:
     if st.button("💾 Приложи"):
         st.session_state.runtime_cfg = cfg
-        st.success("Приложено в RAM!")
+        st.success("Приложено!")
 with col2:
     if st.button("🔄 Фабрични"):
         for key, val in DEFAULT_INDICATORS.items():
@@ -151,20 +141,22 @@ def send_telegram_message(msg: str):
 # --- ГЛАВЕН УЕБ ИНТЕРФЕЙС ---
 st.title("🎯 SMART AMFC Конзолен Монитор")
 
-# Добавяне на активи директно в сесията (RAM)
+# Добавяне на нови валути директно на сайта
 new_symbol = st.text_input("➕ Добави нов актив временно (напр. SOLUSDT):").strip().upper()
 if new_symbol and new_symbol not in cfg['symbols']:
     cfg['symbols'].append(new_symbol)
     st.session_state.runtime_cfg = cfg
     st.rerun()
 
-bg_time = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia")).strftime('%H:%M:%S')
+# Времеви параметри за визуализация
+now = datetime.now(zoneinfo.ZoneInfo("Europe/Sofia"))
+bg_time = now.strftime('%H:%M:%S')
 
 output_text = f"🔄 Сканиране #{st.session_state.scan_count} - {bg_time} (Българско време)\n"
 output_text += "────────────────────────────────────────────────────────────────────────────────\n"
 
 if 'symbols' not in cfg or not cfg['symbols']:
-    output_text += "\nНяма заредени активи в RAM паметта.\n"
+    output_text += "\nВ момента няма заредени активи в паметта.\n"
 else:
     for symbol in cfg['symbols']:
         output_text += f"\n📊 {symbol}\n"
@@ -224,3 +216,9 @@ else:
                 send_telegram_message(msg)
                 bias_txt += " 💥 [СИГНАЛ ИЗПРАТЕН]"
                 
+            st.session_state.previous_states[state_key] = current_bias_type
+            
+            output_text += f"{tf:5s} | {price_str:>12s} | {aroon_str:>9s} | {cmf_str:>7s} | {atr_str:>9s} | {bias_txt}\n"
+        output_text += "───────────────────────────────────────────────────────────────────────────\n"
+
+# Извеждане на състоянието в моношишинен лог
